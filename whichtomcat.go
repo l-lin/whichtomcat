@@ -9,8 +9,8 @@ import (
     "bytes"
     "regexp"
     "os"
-    "github.com/gizak/termui"
-    "github.com/nsf/termbox-go"
+    ui "github.com/gizak/termui"
+    tm "github.com/nsf/termbox-go"
 )
 
 func main() {
@@ -48,37 +48,52 @@ type Tomcat struct {
 }
 
 func displayTomcats(tomcats []*Tomcat) {
-    err := termui.Init()
+    err := ui.Init()
     if err != nil {
         panic(err)
     }
-    defer termui.Close()
+    defer ui.Close()
 
-    termui.UseTheme("helloworld")
+    ui.UseTheme("helloworld")
 
-    renders := make([]termui.Bufferer, 0)
-
-    for index, tomcat := range tomcats {
+    row := make([]ui.GridBufferer, 0)
+    for _, tomcat := range tomcats {
         list := make([]string, len(tomcat.Webapps) + 3)
         list[0] = "[HTTP]  " + tomcat.HttpPort
         list[1] = "[HTTPS] " + tomcat.HttpsPort
         list[2] = "------------------------------------------------"
         copy(list[3:], tomcat.Webapps)
 
-        ls := termui.NewList()
+        ls := ui.NewList()
         ls.Items = list
-        ls.ItemFgColor = termui.ColorYellow
+        ls.ItemFgColor = ui.ColorMagenta
         ls.Border.Label = tomcat.Home
         ls.Height = 15
-        ls.Width = 50
-        ls.Y = index * 10
 
-        renders = append(renders, ls)
+        row = append(row, ls)
+        if len(row) == 3 {
+            ui.Body.AddRows(ui.NewRow(
+                ui.NewCol(4, 0, row[0]),
+                ui.NewCol(4, 0, row[1]),
+                ui.NewCol(4, 0, row[2]),
+            ))
+            row = make([]ui.GridBufferer, 0)
+        }
+    }
+    if len(row) == 1 {
+        ui.Body.AddRows(ui.NewRow(ui.NewCol(4, 0, row[0])))
+    } else if len(row) == 2 {
+        ui.Body.AddRows(ui.NewRow(
+            ui.NewCol(4, 0, row[0]),
+            ui.NewCol(4, 0, row[1]),
+        ))
     }
 
-    termui.Render(renders...)
+    ui.Body.Align()
 
-    termbox.PollEvent()
+    ui.Render(ui.Body)
+
+    tm.PollEvent()
 }
 
 func fetchProcesses() []byte {
@@ -144,11 +159,12 @@ func fetchWebapps(home string) []string {
 }
 
 func fetchTomcatPort(home string) (string, string) {
-    var httpPort, httpsPort string
+    var serverPort, httpPort, httpsPort string
 
     serverXml, _ := os.Open(home + "/conf/server.xml")
     defer serverXml.Close()
 
+    reServer := regexp.MustCompile("<Server port=\"([0-9]+)\"")
     reHttp := regexp.MustCompile("<Connector port=\"([0-9]+)\" protocol=\"HTTP/1.1")
     reHttps := regexp.MustCompile("redirectPort=\"([0-9]+)\"")
 
@@ -157,12 +173,23 @@ func fetchTomcatPort(home string) (string, string) {
         line := scanner.Text()
         lineB := []byte(line)
 
+        if reServer.Match(lineB) {
+            serverPort = reServer.FindStringSubmatch(line)[1]
+        }
         if reHttp.Match(lineB) {
             httpPort = reHttp.FindStringSubmatch(line)[1]
         }
         if reHttps.Match(lineB) {
             httpsPort = reHttps.FindStringSubmatch(line)[1]
         }
+    }
+
+    // Just in case
+    if httpPort == "" {
+        httpPort = serverPort[0:len(serverPort) - 3] + "080"
+    }
+    if httpsPort == "" {
+        httpsPort = serverPort[0:len(serverPort) - 3] + "443"
     }
 
     return httpPort, httpsPort
